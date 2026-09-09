@@ -88,3 +88,44 @@ def validate_platform_toolsets(
             "platform_toolsets resolves to zero valid toolsets — the agent will "
             "have no tools. Run `hermes tools` to reconfigure.")
     return warnings
+
+
+def unknown_toolset_names(
+    toolsets: object, is_valid_toolset: Callable[[str], bool],
+    mcp_server_names: object = None,
+) -> List[str]:
+    """Return the entries in ``toolsets`` that are unknown at validation time, in input order.
+
+    The CLI constructor runs this BEFORE MCP discovery: MCP server names only resolve after
+    ``discover_mcp_tools`` runs (the toolset registry is empty in a fresh interpreter), so
+    ``is_valid_toolset`` rejects every MCP name there and the constructor used to false-warn
+    ``Warning: Unknown toolsets: mcp-<server>`` for valid configured servers (#78102).
+
+    A name is exempt (not returned) when any of:
+    - ``is_valid_toolset(t)`` is True (normal toolsets; the caller keeps its own ``all`` /
+      ``*`` short-circuit, this helper does not special-case them),
+    - ``t in mcp_server_names`` (bare MCP server name; every configured server name exempts,
+      enabled or not, preserving the pre-existing constructor semantics),
+    - ``t`` is a str starting with ``mcp-`` whose suffix is in ``mcp_server_names`` (the
+      ``mcp-<server>`` prefixed form, the canonical MCP toolset name that
+      ``tools/mcp_tool_registration.py`` registers as an alias; non-str entries keep today's
+      flagged behavior instead of raising AttributeError),
+    - ``t == "no_mcp"`` (the reserved "disable all MCP" sentinel, see
+      ``tools_config._merge_mcp_servers``).
+
+    Everything else is returned as unknown. ``is_valid_toolset`` is injected so this does no
+    registry imports or I/O.
+    """
+    names = mcp_server_names or ()
+    unknown: List[str] = []
+    for t in toolsets or ():
+        if is_valid_toolset(t):
+            continue
+        if t in names:
+            continue
+        if isinstance(t, str) and t.startswith("mcp-") and t[4:] in names:
+            continue
+        if t == "no_mcp":
+            continue
+        unknown.append(t)
+    return unknown
